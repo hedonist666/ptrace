@@ -1,4 +1,6 @@
 #include <signal.h>
+#include <stdbool.h>
+#include <assert.h>
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -14,6 +16,12 @@
 #include <sys/user.h>
 
 
+
+typedef enum {
+  EXE_MODE,
+  PID_MODE
+} Mode;
+
 typedef struct handle {
   Elf64_Ehdr *ehdr;
   Elf64_Phdr *phdr;
@@ -25,8 +33,11 @@ typedef struct handle {
   char* exec;
 } handle_t;
 
+int vict_pid;
+
 Elf64_Addr lookup_symbol(handle_t*, const char*);
-
 void print_regs(struct user_regs_struct);
-
 void wrt_sym(handle_t*, int, long);
+char* get_exe_name(int);
+void sighandler(int);
+

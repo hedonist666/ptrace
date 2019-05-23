@@ -1,4 +1,6 @@
 #!/bin/bash
 
 make
-./a.out testasm print_string
+./t2 &
+./a.out -p `pidof ./t2` -f lp
+kill `pidof ./t2`

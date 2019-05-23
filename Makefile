@@ -1,7 +1,7 @@
 cc = gcc
 CFLAGS += -g
 DEPS = $(wildcard *.h)
-OBJECTS = 1.o
+OBJECTS = 2.o
 
 mane: $(OBJECTS)
 	gcc $< $(DEPS)
@@ -12,3 +12,4 @@ mane: $(OBJECTS)
 
 clean:
 	rm -f ./*.o ./*.h.gch ./.*.*.swp a.out
+.PHONY: clean
