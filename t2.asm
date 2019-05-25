@@ -4,13 +4,14 @@ section .text
   global _start
 
 _start:
-  mov rdi, 1
+  mov rdi, 0
   mov rsi, 0
+  push 0x1488
 lp:
-  call inc 
-  mov rsi, rdi
-  loop lp
+  inc rsi
+  call plus
+  jmp lp
 
-inc:
+plus:
   add rdi, rsi
   ret

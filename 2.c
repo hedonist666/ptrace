@@ -129,8 +129,19 @@ trace:
   if (WIFSTOPPED(status) && WSTOPSIG(status) == SIGTRAP) {
     res = ptrace(PTRACE_GETREGS, vict_pid, NULL, &h.pt_reg);
     assert(res >= 0);
-    printf("\n Executable: %s (%d) has hit breakpoint 0x%lx\n", h.exec, vict_pid, h.symaddr);
+    printf("\nExecutable: %s (%d) has hit breakpoint 0x%lx\n", h.exec, vict_pid, h.symaddr);
     print_regs(h.pt_reg);
+/* stack: */
+    printf("SHOWING %ld BYTES OF STACK DATA\n", (long)STACK_DATA);
+    void* buf = malloc(STACK_DATA);
+    pid_read(vict_pid, buf, (void*) h.pt_reg.rsp, STACK_DATA);
+    
+    for (int i = 0; i < STACK_DATA/sizeof(long); ++i) {
+      printf("%lx", *((long*)buf+i)  );
+    }
+    putchar('\n');
+
+/*        */ 
     puts("Press enter to continue");
     getchar();
 
@@ -161,6 +172,24 @@ trace:
 }
 
 
+int pid_read(int pid, void* dst, void* src, size_t len) {
+  if (len % sizeof(void*)) len = len/sizeof(void*) + 1;
+  else len /= sizeof(void*);
+
+  unsigned char* s = (unsigned char*) src;
+  unsigned char* d = (unsigned char*) dst;
+  unsigned long word;
+
+  for (; len != 0; len -= 1) {
+     word = ptrace(PTRACE_PEEKTEXT, pid, s, NULL); 
+     if (word == 1) return 1;
+     *(long *)d = word;
+     d += sizeof(unsigned long);
+     s += sizeof(unsigned long);
+  }
+  
+  return 0;
+}
 
 
 

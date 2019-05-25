@@ -15,6 +15,8 @@
 #include <sys/mman.h>
 #include <sys/user.h>
 
+#define STACK_DATA 256
+
 
 
 typedef enum {
@@ -35,6 +37,7 @@ typedef struct handle {
 
 int vict_pid;
 
+int pid_read(int, void*, void*, size_t);
 Elf64_Addr lookup_symbol(handle_t*, const char*);
 void print_regs(struct user_regs_struct);
 void wrt_sym(handle_t*, int, long);
