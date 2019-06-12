@@ -40,6 +40,14 @@ char* get_exe_name(int pid) {
   return path;
 }
 
+VALUE get_exe_name_wrapper(VALUE self, VALUE pid) {
+  Check_Type(pid, T_FIXNUM);
+  int p = FIX2INT(pid);
+  char* name = get_exe_name(p);
+  return rb_str_new_cstr(name);  
+}
+
+
 void print_regs(struct user_regs_struct pt_reg) {
 printf(
     "%%rcx: %llx\n"
@@ -90,7 +98,7 @@ Elf64_Addr lookup_symbol(binar_t* h, const char* symname) {
 static void dealloc(void* ptr) {
   binar_t* h;
   int res;
-  h = (binar_t*) h;
+  h = (binar_t*) ptr;
   if (h->running) {
     ptrace(PTRACE_DETACH, h->pid, NULL, NULL);
   } 
@@ -99,14 +107,16 @@ static void dealloc(void* ptr) {
   if (!res) {
     rb_raise(rb_eRuntimeError, "munmap error...");
   }
+  
 }
 
 
 
 static const struct rb_data_type_struct rb_binar_type = {
   "Nightowl/binar",
-  {0, dealloc, 0},
-  0, 1488, 0
+  {0, dealloc, 0, },
+  0, 1488,
+  RUBY_TYPED_FREE_IMMEDIATELY,
 };
 
 
@@ -188,6 +198,8 @@ static VALUE lookup_symbol_wrapper(VALUE self, VALUE sym) {
 void Init_binmage() {
   VALUE mod = rb_define_module("Binmage");
   VALUE bin = rb_define_class_under(mod, "Binar", rb_cObject);
+
+  rb_define_method(mod, "get_exe_name", get_exe_name_wrapper, 1);
   
   rb_define_alloc_func(bin, allocate);
 
