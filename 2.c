@@ -8,7 +8,6 @@ int main(int argc, char** argv, char** envp) {
 /*VARIABLES============================================*/
   int fd;
   Mode m;
-  handle_t h;
   int c, res;
   struct stat st;
   long trap, orig;
@@ -20,14 +19,13 @@ int main(int argc, char** argv, char** envp) {
     exit(0);
   }
 
-  memset(&h, 0, sizeof(handle_t));
   
 /*PARSING ARGUMENTS====================================*/
   while ( ( c = getopt(argc, argv, "f:e:p:") ) != -1 ) {
     switch(c) {
       case 'p':
-        vict_pid = atoi(optarg);
-        h.exec = get_exe_name(vict_pid);
+        h.pid = atoi(optarg);
+        h.exec = get_exe_name(h.pid);
         m = PID_MODE;
         break;
       case 'e':
@@ -77,7 +75,7 @@ int main(int argc, char** argv, char** envp) {
     exit(0);
   }
   if (h.ehdr->e_shstrndx == 0 || h.ehdr->e_shoff == 0 || h.ehdr->e_shnum == 0) {
-    puts("section headers not founf @_@");
+    puts("section headers not found @_@");
     exit(0);
   }
 /*=====================================================*/
@@ -89,10 +87,10 @@ int main(int argc, char** argv, char** envp) {
 
 /*PREPARATION FOR DEBUGGING @_@========================*/
   if (m == EXE_MODE) {
-    vict_pid = fork();
-    assert(vict_pid >= 0);
-    if (vict_pid == 0) {
-      res = ptrace(PTRACE_TRACEME, vict_pid, NULL, NULL);
+    h.pid = fork();
+    assert(h.pid >= 0);
+    if (h.pid == 0) {
+      res = ptrace(PTRACE_TRACEME, h.pid, NULL, NULL);
       assert(res >= 0);
       char* args[2];
       args[0] = h.exec;
@@ -101,40 +99,40 @@ int main(int argc, char** argv, char** envp) {
     }
   }
   else if (m == PID_MODE) {
-    res = ptrace(PTRACE_ATTACH, vict_pid, NULL, NULL);
+    res = ptrace(PTRACE_ATTACH, h.pid, NULL, NULL);
     assert(res >= 0);
   }
   wait(&status);
 /*=====================================================*/
 
-  printf("Beginnig analysis of pid: %d at: %s (0x%lx)...\n", vict_pid, h.symname, h.symaddr);
+  printf("Beginnig analysis of pid: %d at: %s (0x%lx)...\n", h.pid, h.symname, h.symaddr);
 
 
 /*SETTING BREAKPOINT===================================*/
-  orig = ptrace(PTRACE_PEEKTEXT, vict_pid, h.symaddr, NULL);
+  orig = ptrace(PTRACE_PEEKTEXT, h.pid, h.symaddr, NULL);
   assert(orig >= 0);
 
   trap = (orig & ~0xff) | 0xcc;
 
-  wrt_sym(&h, vict_pid, trap);
+  wrt_sym(&h, h.pid, trap);
   
 /*=====================================================*/
 
 /*ACTUAL DEBUGGING (probably)==========================*/
 trace:
-  res = ptrace(PTRACE_CONT, vict_pid, NULL, NULL);
+  res = ptrace(PTRACE_CONT, h.pid, NULL, NULL);
   assert(res >= 0);
 
   wait(&status);
   if (WIFSTOPPED(status) && WSTOPSIG(status) == SIGTRAP) {
-    res = ptrace(PTRACE_GETREGS, vict_pid, NULL, &h.pt_reg);
+    res = ptrace(PTRACE_GETREGS, h.pid, NULL, &h.pt_reg);
     assert(res >= 0);
-    printf("\nExecutable: %s (%d) has hit breakpoint 0x%lx\n", h.exec, vict_pid, h.symaddr);
+    printf("\nExecutable: %s (%d) has hit breakpoint 0x%lx\n", h.exec, h.pid, h.symaddr);
     print_regs(h.pt_reg);
 /* stack: */
     printf("SHOWING %ld BYTES OF STACK DATA\n", (long)STACK_DATA);
     void* buf = malloc(STACK_DATA);
-    pid_read(vict_pid, buf, (void*) h.pt_reg.rsp, STACK_DATA);
+    pid_read(h.pid, buf, (void*) h.pt_reg.rsp, STACK_DATA);
     
     for (int i = 0; i < STACK_DATA/sizeof(long); ++i) {
       printf("%lx", *((long*)buf+i)  );
@@ -145,22 +143,22 @@ trace:
     puts("Press enter to continue");
     getchar();
 
-    wrt_sym(&h, vict_pid, orig);
+    wrt_sym(&h, h.pid, orig);
 
     h.pt_reg.rip = h.pt_reg.rip - 1;
-    res = ptrace(PTRACE_SETREGS, vict_pid, NULL, &h.pt_reg);
+    res = ptrace(PTRACE_SETREGS, h.pid, NULL, &h.pt_reg);
     assert(res >= 0);
 
-    res = ptrace(PTRACE_SINGLESTEP, vict_pid, NULL, NULL);
+    res = ptrace(PTRACE_SINGLESTEP, h.pid, NULL, NULL);
     assert(res >= 0);
     wait(NULL);
     
-    wrt_sym(&h, vict_pid, trap);
+    wrt_sym(&h, h.pid, trap);
 
     goto trace;
   }
   else if ( WIFEXITED(status) ) {
-    printf("Completed tracing pid: %d\n", vict_pid);
+    printf("Completed tracing pid: %d\n", h.pid);
     exit(0);
   }
   else {
@@ -206,8 +204,8 @@ char* get_exe_name(int pid) {
 }
 
 void sighandler(int sig) {
-  printf("Caught SIGINT: Detaching from %d\n", vict_pid);
-  int res = ptrace(PTRACE_DETACH, vict_pid, NULL, NULL);
+  printf("Caught SIGINT: Detaching from %d\n", h.pid);
+  int res = ptrace(PTRACE_DETACH, h.pid, NULL, NULL);
   assert(res >= 0);
   exit(0);
 }
@@ -232,12 +230,12 @@ printf(
     "%%rsp: %llx\n", pt_reg.rcx, pt_reg.rdx, pt_reg.rbx, pt_reg.rax, pt_reg.rdi, pt_reg.rsi, pt_reg.r8, pt_reg.r9, pt_reg.r10, pt_reg.r11, pt_reg.r12, pt_reg.r13, pt_reg.r14, pt_reg.r15, pt_reg.rsp);
 }
 
-void wrt_sym(handle_t* h, int pid, long data) {
+void wrt_sym(binar* h, int pid, long data) {
   int res = ptrace(PTRACE_POKETEXT, pid, h->symaddr, data);
   assert(res >= 0);
 }
 
-Elf64_Addr lookup_symbol(handle_t* h, const char* symname) {
+Elf64_Addr lookup_symbol(binar* h, const char* symname) {
   int i, j;
   char* strtab;
   Elf64_Sym* symtab;

@@ -1,7 +1,8 @@
 cc = gcc
 CFLAGS += -g
 DEPS = $(wildcard *.h)
-OBJECTS = inject.c
+#OBJECTS = inject.c
+OBJECTS = 2.o
 
 mane: $(OBJECTS)
 	gcc $< $(DEPS)
