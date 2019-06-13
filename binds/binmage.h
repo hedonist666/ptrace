@@ -23,6 +23,12 @@
 #define DO_CHECKS
 
 
+typedef struct Break {
+  Elf64_Addr addr;
+  long orig;
+  struct Break* prev;
+} Break;
+
 typedef struct handle {
   Elf64_Ehdr *ehdr;
   Elf64_Phdr *phdr;
@@ -33,6 +39,8 @@ typedef struct handle {
   bool running;
 
   pid_t pid;
+
+  Break* bps;
 
   uint8_t* mem;
 
@@ -46,7 +54,7 @@ int pid_read(int, void*, void*, size_t);
 
 
 Elf64_Addr lookup_symbol(binar_t*, const char*);
-void print_regs(struct user_regs_struct);
+//void print_regs(struct user_regs_struct);
 void wrt_sym(binar_t*, int, long);
 char* get_exe_name(int);
 void sighandler(int);

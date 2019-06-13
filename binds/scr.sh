@@ -1,4 +1,4 @@
 #!/bin/bash
 
-make
-ruby test.rb
+make && \
+  ruby test.rb

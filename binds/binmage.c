@@ -25,6 +25,7 @@ int pid_read(int pid, void* dst, void* src, size_t len) {
 
 
 char* get_exe_name(int pid) {
+
   char cmdline[255];
   char* path = (char*) malloc( 512*sizeof(char) );
   int fd;
@@ -32,12 +33,13 @@ char* get_exe_name(int pid) {
   snprintf(cmdline, 255, "/proc/%d/cmdline", pid);
 
   fd = open(cmdline, O_RDONLY);
-  assert(fd >= 0);
+  if (fd < 0) rb_raise(rb_eRuntimeError, "get_exe_name::open");
 
   int r = read(fd, path, 512);
-  assert(r >= 0);
+  if (r < 0) rb_raise(rb_eRuntimeError, "get_exe_name::read");
 
   return path;
+
 }
 
 VALUE get_exe_name_wrapper(VALUE self, VALUE pid) {
@@ -48,7 +50,13 @@ VALUE get_exe_name_wrapper(VALUE self, VALUE pid) {
 }
 
 
-void print_regs(struct user_regs_struct pt_reg) {
+static void print_regs() {
+
+
+
+
+struct user_regs_struct pt_reg;
+
 printf(
     "%%rcx: %llx\n"
     "%%rdx: %llx\n"
@@ -112,7 +120,7 @@ static void dealloc(void* ptr) {
 
 
 
-static const struct rb_data_type_struct rb_binar_type = {
+const struct rb_data_type_struct rb_binar_type = {
   "Nightowl/binar",
   {0, dealloc, 0, },
   0, 1488,
@@ -132,6 +140,7 @@ static VALUE allocate(VALUE klass) {
 
 static VALUE initialize(VALUE self, VALUE vic) {
   binar_t* h; 
+  int res, status;
   TypedData_Get_Struct(self, binar_t, &rb_binar_type, h);
 
   switch(TYPE(vic)) {
@@ -151,7 +160,7 @@ static VALUE initialize(VALUE self, VALUE vic) {
   int fd = open(h->exec, O_RDONLY);
   if (fd < 0) rb_raise(rb_eRuntimeError, "unable to open file");
 
-  int res = fstat(fd, &h->st);
+  res = fstat(fd, &h->st);
   if (res < 0) rb_raise(rb_eRuntimeError, "fstat"); 
 
   h->mem = mmap(NULL, h->st.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
@@ -174,14 +183,45 @@ static VALUE initialize(VALUE self, VALUE vic) {
 #endif
 
   if (h->running) {
-
+    res = ptrace(PTRACE_ATTACH, h->pid, NULL, NULL);  
+    if (res < 0) rb_raise(rb_eRuntimeError, "unable to attach");
   }
 
   else {
-
+    h->pid = fork();
+    if (h->pid < 0) rb_raise(rb_eRuntimeError, "fork");
+    if (h->pid == 0) {
+      res = ptrace(PTRACE_TRACEME, h->pid, NULL, NULL);
+      if (res < 0) rb_raise(rb_eRuntimeError, "traceme");
+      char* args[2];
+      args[0] = h->exec;
+      args[1] = NULL;
+      execve(h->exec, args, NULL); //r u sure?
+    }
   }
+  wait(&status);
   
 }
+
+
+static VALUE cont(VALUE self) {
+  binar_t* h;
+  int res, status;
+  TypedData_Get_Struct(self, binar_t, &rb_binar_type, h);
+  res = ptrace(PTRACE_CONT, h->pid, NULL, NULL);
+  if (res < 0) rb_raise(rb_eRuntimeError, "ptrace_cont");
+  wait(&status);
+  return Qnil;
+}
+
+
+/*
+static VALUE place_break(VALUE self, VALUE addr) {
+  Check_Type(addr, T_FIXNUM);
+  int v = FIX2LONG(addr);
+  int res;
+}
+*/
 
 
 static VALUE lookup_symbol_wrapper(VALUE self, VALUE sym) {
@@ -205,4 +245,5 @@ void Init_binmage() {
 
   rb_define_method(bin, "initialize", initialize, 1);
   rb_define_method(bin, "lookup_symbol", lookup_symbol_wrapper, 1);
+  rb_define_method(bin, "continue", cont, 0);
 }
