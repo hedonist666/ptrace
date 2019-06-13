@@ -37,10 +37,11 @@ typedef struct handle {
   struct stat st;
 
   bool running;
+  int status;
 
   pid_t pid;
 
-  Break* bps;
+  Break* bp;
 
   uint8_t* mem;
 

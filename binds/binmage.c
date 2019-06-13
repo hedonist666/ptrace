@@ -50,31 +50,6 @@ VALUE get_exe_name_wrapper(VALUE self, VALUE pid) {
 }
 
 
-static void print_regs() {
-
-
-
-
-struct user_regs_struct pt_reg;
-
-printf(
-    "%%rcx: %llx\n"
-    "%%rdx: %llx\n"
-    "%%rbx: %llx\n"
-    "%%rax: %llx\n"
-    "%%rdi: %llx\n"
-    "%%rsi: %llx\n"    
-    "%%r8:  %llx\n"
-    "%%r9:  %llx\n"
-    "%%r10: %llx\n"
-    "%%r11: %llx\n"
-    "%%r12  %llx\n"
-    "%%r13  %llx\n"
-    "%%r14: %llx\n"
-    "%%r15: %llx\n"
-    "%%rsp: %llx\n", pt_reg.rcx, pt_reg.rdx, pt_reg.rbx, pt_reg.rax, pt_reg.rdi, pt_reg.rsi, pt_reg.r8, pt_reg.r9, pt_reg.r10, pt_reg.r11, pt_reg.r12, pt_reg.r13, pt_reg.r14, pt_reg.r15, pt_reg.rsp);
-}
-
 
 Elf64_Addr lookup_symbol(binar_t* h, const char* symname) {
   int i, j;
@@ -145,7 +120,7 @@ static VALUE initialize(VALUE self, VALUE vic) {
 
   switch(TYPE(vic)) {
     case T_STRING:
-      h->exec = StringValuePtr( vic ); 
+      h->exec = strdup( StringValuePtr( vic ) ); 
       h->running = false;
       break;
     case T_FIXNUM:
@@ -199,41 +174,193 @@ static VALUE initialize(VALUE self, VALUE vic) {
       execve(h->exec, args, NULL); //r u sure?
     }
   }
-  wait(&status);
+  wait(&h->status);
   
 }
 
+static Break* find_bp(binar_t* h ,long ad) {
+  Break* c;
+  for (c = h->bp; c->addr != ad; c = c->prev) {
+    if (c == NULL) {
+      return NULL;
+    }
+  }
+  return c;
+}
 
 static VALUE cont(VALUE self) {
   binar_t* h;
-  int res, status;
+  int res;
   TypedData_Get_Struct(self, binar_t, &rb_binar_type, h);
+
+
   res = ptrace(PTRACE_CONT, h->pid, NULL, NULL);
   if (res < 0) rb_raise(rb_eRuntimeError, "ptrace_cont");
-  wait(&status);
+  wait(&h->status);
+
+  if (WIFSTOPPED(h->status) && WSTOPSIG(h->status) == SIGTRAP) {
+
+    res = ptrace(PTRACE_GETREGS, h->pid, NULL, &h->pt_reg);
+    printf("\nExecutable: %s (%d) has hit breakpoint 0x%lx\n", h->exec, h->pid, h->pt_reg.rip);
+    Break* bp = find_bp(h, h->pt_reg.rip - 1); 
+    if (bp == NULL) rb_raise(rb_eRuntimeError, "something's wrong, real shit @_@");
+    
+    res = ptrace(PTRACE_POKETEXT, h->pid, bp->addr, bp->orig);
+
+    h->pt_reg.rip = h->pt_reg.rip - 1;
+    res = ptrace(PTRACE_SETREGS, h->pid, NULL, &h->pt_reg);
+    if (res < 0) rb_raise(rb_eRuntimeError, "cont::setregs");
+
+    res = ptrace(PTRACE_SINGLESTEP, h->pid, NULL, NULL);
+    if (res < 0) rb_raise(rb_eRuntimeError, "cont::setregs");
+
+    wait(NULL);
+    
+    long trap = (bp->orig & ~0xff) | 0xcc;
+    res = ptrace(PTRACE_POKETEXT, h->pid, bp->addr, trap);
+
+
+  }
+  else if ( WIFEXITED(h->status) ) {
+    printf("\nCompleted tracing pid: %d\n", h->pid);
+  }
+  else {
+    puts("child unexpectedly stopped @_@");
+  }
+
   return Qnil;
 }
 
 
-/*
-static VALUE place_break(VALUE self, VALUE addr) {
-  Check_Type(addr, T_FIXNUM);
-  int v = FIX2LONG(addr);
-  int res;
-}
-*/
 
+static VALUE place_break(VALUE self, VALUE address) {
+  int a;
+  int res;
+  long trap;
+  binar_t* h;
+  TypedData_Get_Struct(self, binar_t, &rb_binar_type, h);
+
+  if (TYPE(address) == T_FIXNUM) {
+    a = FIX2LONG(address);
+  }
+  else if (TYPE(address) == T_STRING) {
+    char* s = StringValuePtr(address);
+    a = lookup_symbol(h, s);
+  }
+  else {
+    rb_raise(rb_eTypeError, "invalid value");
+  }
+
+  Break* p    = h->bp;
+  h->bp       = (Break*) malloc(sizeof(Break));
+  h->bp->prev = p;
+  h->bp->addr = a;
+  h->bp->orig = ptrace(PTRACE_PEEKTEXT, h->pid, a, NULL);
+  if (h->bp->orig < 0) rb_raise(rb_eRuntimeError, "ptrace_peektext");
+  trap = (h->bp->orig & ~0xff) | 0xcc;
+  res = ptrace(PTRACE_POKETEXT, h->pid, a, trap);
+  if (res < 0) rb_raise(rb_eRuntimeError, "ptrace_poketext");
+
+  return Qnil;
+}
+
+static VALUE del_break(VALUE self, VALUE address) {
+  int a;
+  int res;
+  binar_t* h;
+  Break* p;
+  TypedData_Get_Struct(self, binar_t, &rb_binar_type, h);
+
+  if (TYPE(address) == T_FIXNUM) {
+    a = FIX2LONG(address);
+  }
+  else if (TYPE(address) == T_STRING) {
+    char* s = StringValuePtr(address);
+    a = lookup_symbol(h, s);
+  }
+  else {
+    rb_raise(rb_eTypeError, "invalid value");
+  }
+
+
+  Break* n;
+  for (p = h->bp; p->addr != a; p = p->prev) {
+    if (p == NULL) {
+      puts("unknown breakpoint");
+      return Qnil;
+      n = p;
+    }
+  } 
+  
+  res = ptrace(PTRACE_POKETEXT, h->pid, p->addr, p->orig);
+  if (res < 0) rb_raise(rb_eRuntimeError, "ptrace_poketext");
+
+  n->prev = p->prev;
+  free(p);
+
+  return Qnil;
+
+}
 
 static VALUE lookup_symbol_wrapper(VALUE self, VALUE sym) {
   
-  Check_Type(sym, T_STRING);
-  char* s = StringValuePtr(sym);
+  char* s;
   binar_t* h;
+  int ret;
+  VALUE res;
+
+  Check_Type(sym, T_STRING);
+  s = StringValuePtr(sym);
   TypedData_Get_Struct(self, binar_t, &rb_binar_type, h);
-  VALUE res = INT2NUM (lookup_symbol(h, s));
+
+  ret = lookup_symbol(h, s);
+  res = ret ? INT2NUM (ret) : Qnil;
   return res;
 
 }
+
+static VALUE print_breaks(VALUE self) {
+  binar_t* h;
+  Break* c;
+  int i;
+  TypedData_Get_Struct(self, binar_t, &rb_binar_type, h);
+
+  for (c = h->bp, i = 1; c != NULL; c = c->prev, ++i) {
+    printf("%d: %p\n\n", i, c->addr);
+  }
+ 
+  return Qnil;
+}
+
+
+static VALUE print_regs(VALUE self) {
+  binar_t* h;
+  int res;
+  TypedData_Get_Struct(self, binar_t, &rb_binar_type, h);
+
+  res = ptrace(PTRACE_GETREGS, h->pid, NULL, &h->pt_reg);
+  if (res < 0) rb_raise(rb_eRuntimeError, "ptrace_poketext");
+
+  printf(
+      "%%rcx: %llx\n"
+      "%%rdx: %llx\n"
+      "%%rbx: %llx\n"
+      "%%rax: %llx\n"
+      "%%rdi: %llx\n"
+      "%%rsi: %llx\n"    
+      "%%r8:  %llx\n"
+      "%%r9:  %llx\n"
+      "%%r10: %llx\n"
+      "%%r11: %llx\n"
+      "%%r12  %llx\n"
+      "%%r13  %llx\n"
+      "%%r14: %llx\n"
+      "%%r15: %llx\n"
+      "%%rsp: %llx\n", h->pt_reg.rcx, h->pt_reg.rdx, h->pt_reg.rbx, h->pt_reg.rax, h->pt_reg.rdi, h->pt_reg.rsi, h->pt_reg.r8, h->pt_reg.r9, h->pt_reg.r10, h->pt_reg.r11, h->pt_reg.r12, h->pt_reg.r13, h->pt_reg.r14, h->pt_reg.r15, h->pt_reg.rsp);
+
+  return Qnil;
+}
+
 
 void Init_binmage() {
   VALUE mod = rb_define_module("Binmage");
@@ -245,5 +372,9 @@ void Init_binmage() {
 
   rb_define_method(bin, "initialize", initialize, 1);
   rb_define_method(bin, "lookup_symbol", lookup_symbol_wrapper, 1);
+  rb_define_method(bin, "print_regs", print_regs, 0);
   rb_define_method(bin, "continue", cont, 0);
+  rb_define_method(bin, "place_breakpoint", place_break, 1);
+  rb_define_method(bin, "delete_breakpoint", del_break, 1);
+  rb_define_method(bin, "breakpoints", print_breaks, 0);
 }
