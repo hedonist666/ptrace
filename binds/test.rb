@@ -1,7 +1,6 @@
-require './binmage'
-include Binmage
+require 'binmage'
 
 
-b = Binar.new "testasm"
+b = Binmage::Binar.new "vict"
 
 binding.irb

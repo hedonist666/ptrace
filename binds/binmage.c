@@ -3,25 +3,6 @@
 #include "extconf.h"
 
 
-int pid_read(int pid, void* dst, void* src, size_t len) {
-  if (len % sizeof(void*)) len = len/sizeof(void*) + 1;
-  else len /= sizeof(void*);
-
-  unsigned char* s = (unsigned char*) src;
-  unsigned char* d = (unsigned char*) dst;
-  unsigned long word;
-
-  for (; len != 0; len -= 1) {
-     word = ptrace(PTRACE_PEEKTEXT, pid, s, NULL); 
-     if (word == 1) return 1;
-     *(long *)d = word;
-     d += sizeof(unsigned long);
-     s += sizeof(unsigned long);
-  }
- 
-  return 0;
-}
-
 
 
 char* get_exe_name(int pid) {
@@ -82,6 +63,11 @@ static void dealloc(void* ptr) {
   binar_t* h;
   int res;
   h = (binar_t*) ptr;
+  for (Break* c = h->bp; c != NULL;) {
+    Break* tmp = c -> prev;
+    free(c);
+    c = tmp;
+  }
   if (h->running) {
     ptrace(PTRACE_DETACH, h->pid, NULL, NULL);
   } 
@@ -201,7 +187,7 @@ static VALUE cont(VALUE self) {
   if (WIFSTOPPED(h->status) && WSTOPSIG(h->status) == SIGTRAP) {
 
     res = ptrace(PTRACE_GETREGS, h->pid, NULL, &h->pt_reg);
-    printf("\nExecutable: %s (%d) has hit breakpoint 0x%lx\n", h->exec, h->pid, h->pt_reg.rip);
+    printf("\nExecutable: %s (%d) has hit breakpoint 0x%lx\n", h->exec, h->pid, h->pt_reg.rip-1);
     Break* bp = find_bp(h, h->pt_reg.rip - 1); 
     if (bp == NULL) rb_raise(rb_eRuntimeError, "something's wrong, real shit @_@");
     
@@ -217,9 +203,13 @@ static VALUE cont(VALUE self) {
     wait(NULL);
     
     long trap = (bp->orig & ~0xff) | 0xcc;
+
     res = ptrace(PTRACE_POKETEXT, h->pid, bp->addr, trap);
+    if (res < 0) rb_raise(rb_eRuntimeError, "ptrace_poketext");
 
-
+    res = ptrace(PTRACE_GETREGS, h->pid, NULL, &h->pt_reg);
+    if (res < 0) rb_raise(rb_eRuntimeError, "ptrace_getregs");
+    
   }
   else if ( WIFEXITED(h->status) ) {
     printf("\nCompleted tracing pid: %d\n", h->pid);
@@ -288,8 +278,8 @@ static VALUE del_break(VALUE self, VALUE address) {
     if (p == NULL) {
       puts("unknown breakpoint");
       return Qnil;
-      n = p;
     }
+    n = p;
   } 
   
   res = ptrace(PTRACE_POKETEXT, h->pid, p->addr, p->orig);
@@ -361,6 +351,70 @@ static VALUE print_regs(VALUE self) {
   return Qnil;
 }
 
+int read_data(int pid, void* dst, void* src, size_t len) {
+  if (len % sizeof(void*)) len = len/sizeof(void*) + 1;
+  else len /= sizeof(void*);
+
+  unsigned char* s = (unsigned char*) src;
+  unsigned char* d = (unsigned char*) dst;
+  unsigned long word;
+
+  for (; len != 0; len -= 1) {
+     word = ptrace(PTRACE_PEEKTEXT, pid, s, NULL); 
+     if (word == 1) return 1;
+     *(long *)d = word;
+     d += sizeof(unsigned long);
+     s += sizeof(unsigned long);
+  }
+
+  for (int i = 0; i < len; ++i) {
+    printf("%d\n", d[i]);
+  }
+ 
+  return 0;
+}
+
+static VALUE read_data_wrapper(VALUE self, VALUE arg1, VALUE arg2) {
+  VALUE res;
+  binar_t* h;
+  void* addr;
+  unsigned char* dst;
+
+  Check_Type(arg2, T_FIXNUM);
+  long len = FIX2LONG(arg2);
+
+  TypedData_Get_Struct(self, binar_t, &rb_binar_type, h);
+
+  if (TYPE(arg1) == T_FIXNUM) {
+    addr = FIX2LONG(arg1);
+  }
+  else if (TYPE(arg1) == T_STRING) {
+    char* s = StringValuePtr(arg1);
+    addr = lookup_symbol(h, s);
+  }
+  else {
+    rb_raise(rb_eTypeError, "invalid value");
+  }
+
+  
+  res = rb_ary_new2(len);
+  dst = malloc(len);
+
+
+  if (read_data(h->pid, dst, addr, len) == 0) {
+    for (int i = 0; i < len; ++i) {
+      rb_ary_store(res, i, INT2NUM(dst[i]) );
+    }
+    free(dst);
+    return res;
+  }
+
+  free(dst);
+  return Qnil;
+}
+
+
+
 
 void Init_binmage() {
   VALUE mod = rb_define_module("Binmage");
@@ -377,4 +431,5 @@ void Init_binmage() {
   rb_define_method(bin, "place_breakpoint", place_break, 1);
   rb_define_method(bin, "delete_breakpoint", del_break, 1);
   rb_define_method(bin, "breakpoints", print_breaks, 0);
+  rb_define_method(bin, "read_data", read_data_wrapper, 2);
 }

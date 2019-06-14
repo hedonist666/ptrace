@@ -1,4 +1,4 @@
 #!/bin/bash
 
-make && \
+make install && \
   ruby test.rb
